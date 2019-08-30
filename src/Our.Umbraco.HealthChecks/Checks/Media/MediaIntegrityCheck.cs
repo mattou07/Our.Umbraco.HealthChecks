@@ -156,14 +156,16 @@ namespace Our.Umbraco.HealthChecks.Checks.Media
             string mediaDirectoryString = mediaDirectory.ToString().Replace("Media", "");
             if (!mediaDirectory.Exists)
             {
-                throw new DirectoryNotFoundException();
+                //Return empty Hashset when the media directory is missing
+                return new HashSet<string>();
             }
 
             DirectoryInfo[] mediaFolders = mediaDirectory.GetDirectories();
 
             if (mediaFolders.Length == 0)
             {
-                throw new FileNotFoundException();
+                //Return empty Hashset when the media directory is empty
+                return new HashSet<string>();
             }
 
             var mediaFiles = new HashSet<string>();
@@ -200,48 +202,57 @@ namespace Our.Umbraco.HealthChecks.Checks.Media
         {
             bool success = false;
             string resultMessage = string.Empty;
-            int foundInContent = 0;
-            int foundInSiteLogoContent = 0;
             int foundInMedia = 0;
             HashSet<string> mediaOnDisk = ScanMediaOnDisk();
-            Dictionary<string, HashSet<string>> mediaExamineDictionary = QueryMediaFromInternalIndex();
-            HashSet<string> mediaInIndex = mediaExamineDictionary["mediaItems"];
-            HashSet<string> badMediaItemsIds = mediaExamineDictionary["badMediaItemsIDs"];
-            HashSet<string> orphanedMediaItems = new HashSet<string>();
-            var mediaItemsInCache = findMediaUrlsInUmbracoConfig();
-            foreach (var matchedUmbracoContent in mediaItemsInCache)
-            {
-                //Hashset can't contain duplicates so will remove them from the results
-                mediaInIndex.Add(matchedUmbracoContent);
-            }
-            foreach (var item in mediaOnDisk)
-            {
-
-                if (!mediaInIndex.Contains(item))
-                {
-                    orphanedMediaItems.Add(item);
-                }
-                else
-                {
-                    //Found in Internal Index
-                    foundInMedia += 1;
-                }
-            }
-            success = orphanedMediaItems.Count == 0;
-            //StatusResultType resultType = StatusResultType.Warning;
+            //If our media on disk hashset is not empty
             var actions = new List<HealthCheckAction>();
-            var parameters = new Dictionary<string, object>();
-            parameters.Add("flaggedMediaItems", orphanedMediaItems);
-            if (success == false)
+            if (mediaOnDisk.Any())
             {
-                actions.Add(new HealthCheckAction(MoveOrphanedMediaAction, Id)
+                Dictionary<string, HashSet<string>> mediaExamineDictionary = QueryMediaFromInternalIndex();
+                HashSet<string> mediaInIndex = mediaExamineDictionary["mediaItems"];
+                HashSet<string> badMediaItemsIds = mediaExamineDictionary["badMediaItemsIDs"];
+                HashSet<string> orphanedMediaItems = new HashSet<string>();
+                var mediaItemsInCache = findMediaUrlsInUmbracoConfig();
+                foreach (var matchedUmbracoContent in mediaItemsInCache)
                 {
-                    Name = _textService.Localize("Our.Umbraco.HealthChecks/moveOrphanedMedia"),
-                    Description = _textService.Localize("Our.Umbraco.HealthChecks/orphanedMediaDescription"),
-                    ActionParameters = parameters,
-                });
+                    //Hashset can't contain duplicates so will remove them from the results
+                    mediaInIndex.Add(matchedUmbracoContent);
+                }
+                foreach (var item in mediaOnDisk)
+                {
+
+                    if (!mediaInIndex.Contains(item))
+                    {
+                        orphanedMediaItems.Add(item);
+                    }
+                    else
+                    {
+                        //Found in Internal Index
+                        foundInMedia += 1;
+                    }
+                }
+                resultMessage = String.Format("Found {0} media items on disk. I found {1} items within the Umbraco Cache, {2} items when combining the cache and examine, {3} items appear to be orphaned, I have found {4} media items that have no media uploaded", mediaOnDisk.Count().ToString(), mediaItemsInCache.Count.ToString(), foundInMedia, orphanedMediaItems.Count.ToString(), badMediaItemsIds.Count.ToString());
+
+                success = orphanedMediaItems.Count == 0;
+                //If we find orphaned media we want to add the action button
+                if (!success)
+                {
+                    var parameters = new Dictionary<string, object>();
+                    parameters.Add("flaggedMediaItems", orphanedMediaItems);
+                    actions.Add(new HealthCheckAction(MoveOrphanedMediaAction, Id)
+                    {
+                        Name = _textService.Localize("Our.Umbraco.HealthChecks/moveOrphanedMedia"),
+                        Description = _textService.Localize("Our.Umbraco.HealthChecks/orphanedMediaDescription"),
+                        ActionParameters = parameters,
+                    });
+                } 
             }
-            resultMessage = String.Format("Found {0} media items on disk. I found {1} items within the Umbraco Cache, {2} items when combining the cache and examine, {3} items appear to be orphaned, I have found {4} media items that have no media uploaded", mediaOnDisk.Count().ToString(), mediaItemsInCache.Count.ToString(), foundInMedia, orphanedMediaItems.Count.ToString(), badMediaItemsIds.Count.ToString());
+            else
+            {
+                resultMessage = "We did not find any media on disk. Is the media folder missing or empty on disk?";
+                success = true;
+            }
+
             return
                 new HealthCheckStatus(resultMessage)
                 {
@@ -270,6 +281,7 @@ namespace Our.Umbraco.HealthChecks.Checks.Media
                     throw new InvalidOperationException("Move Orphaned Media action requested is either not executable or does not exist");
             }
         }
+
         /// <summary>
         /// Take our flaggedMediaItems and move them outside the web root into a folder named with a DateTime
         /// </summary>
